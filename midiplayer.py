@@ -11,10 +11,11 @@ import st7789
         
 MESSAGE = ""
 #
-# enter directory this script will scan here
+# enter directory this script will scan in the line below
 #
 directory = '/home/pi' 
 file_extension = '.mid'
+
 button1=Button(5)
 button2=Button(6)
 button3=Button(16)
