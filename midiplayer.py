@@ -10,6 +10,9 @@ from PIL import Image, ImageDraw, ImageFont
 import st7789
         
 MESSAGE = ""
+#
+# enter directory this script will scan here
+#
 directory = '/home/pi' 
 file_extension = '.mid'
 button1=Button(5)
@@ -91,8 +94,6 @@ elif display_type == "dhmini":
 else:
     print("Invalid display type!")
 
-
-print("hier")
 os.system(f'amixer cset numid=1 50%')
 fs = fluidsynth.Synth()
 fs.start(driver="alsa")
