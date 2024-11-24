@@ -41,9 +41,9 @@ selectedindex=0
 #
 display_type = "square"
 #
-# get the first midi keyboard
+# get the first best midi keyboard
 #
-midi_input = mido.get_input_names()[1]
+midi_input = mido.get_input_names()[-1]
 print(f"Using MIDI input: {midi_input}")
 #
 # if a button was pressed:
