@@ -6,6 +6,7 @@ import sys
 import time
 import os
 import fluidsynth
+import mido
 from gpiozero import Button, DigitalOutputDevice
 from PIL import Image, ImageDraw, ImageFont
 import st7789
@@ -32,13 +33,18 @@ fs=''
 #
 # holds the filenames, the pathes they're found in and the number of the currently selected midifile
 #
-pathes=[]
-files=[]
+pathes=["MIDI KEYBOARD"]
+files=["MIDI KEYBOARD"]
 selectedindex=0
 #
 # the display is always "square" on the Pimoroni boards
 #
 display_type = "square"
+#
+# get the first midi keyboard
+#
+midi_input = mido.get_input_names()[1]
+print(f"Using MIDI input: {midi_input}")
 #
 # if a button was pressed:
 #
@@ -59,7 +65,19 @@ def handle_button(bt):
         fs = fluidsynth.Synth()
         fs.start(driver="alsa")
         sfid=fs.sfload("/usr/share/sounds/sf2/General_MIDI_64_1.6.sf2")
-        fs.play_midi_file(pathes[selectedindex])
+        if selectedindex==0:
+            fs.program_select(0, sfid, 0, 0)
+            #
+            # play notes when necessary
+            #
+            with mido.open_input(midi_input) as inport:
+                for msg in inport:
+                    if msg.type == 'note_on':
+                        fs.noteon(0, msg.note, msg.velocity)
+                    elif msg.type == 'note_off':
+                        fs.noteoff(0,msg.note)
+        else:
+            fs.play_midi_file(pathes[selectedindex])
     if str(bt.pin)=="GPIO6":
         fs.delete()
 #
