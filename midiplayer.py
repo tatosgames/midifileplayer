@@ -41,7 +41,7 @@ selectedindex=0
 #
 display_type = "square"
 #
-# get the first best midi keyboard
+# get the first midi keyboard
 #
 midi_input = mido.get_input_names()[-1]
 print(f"Using MIDI input: {midi_input}")
@@ -64,8 +64,8 @@ def handle_button(bt):
     if str(bt.pin)=="GPIO5":
         fs = fluidsynth.Synth()
         fs.start(driver="alsa")
-        sfid=fs.sfload("/usr/share/sounds/sf2/General_MIDI_64_1.6.sf2")
         if selectedindex==0:
+            sfid=fs.sfload("/usr/share/sounds/sf2/Rhodes.sf2")
             fs.program_select(0, sfid, 0, 0)
             #
             # play notes when necessary
@@ -77,6 +77,7 @@ def handle_button(bt):
                     elif msg.type == 'note_off':
                         fs.noteoff(0,msg.note)
         else:
+            sfid=fs.sfload("/usr/share/sounds/sf2/General_MIDI_64_1.6.sf2")
             fs.play_midi_file(pathes[selectedindex])
     if str(bt.pin)=="GPIO6":
         fs.delete()
