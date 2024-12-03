@@ -38,6 +38,8 @@ cd /usr/share/sounds/sf2
 sudo wget http://ntonyx.com/soft/32MbGMStereo.sf2
 sudo wget https://musical-artifacts.com/artifacts/923/General_MIDI_64_1.6.sf2
 
+there's an SD card image for RasPi Zero 2 here:  https://1drv.ms/u/s!Au06jbGd_8NctIMgqsqv9tbYcJHwTQ?e=V0flcq
+
 (Download any MIDI file)
 
 fluidsynth -a alsa -n -i /usr/share/sounds/sf2/FluidR3_GM.sf2 midifile.mid
