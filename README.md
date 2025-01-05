@@ -63,5 +63,3 @@ there's an SD card image for RasPi Zero 2 here:  https://1drv.ms/u/s!Au06jbGd_8N
 (Download any MIDI file)
 
 fluidsynth -a alsa -n -i /usr/share/sounds/sf2/FluidR3_GM.sf2 midifile.mid
-
-![image](https://github.com/user-attachments/assets/79153b5c-3195-4052-aca8-ceaab21c4a7c)
