@@ -29,6 +29,8 @@ sudo pip3 install pidi-display-st7789 --break-system-packages
 
 sudo pip3 install pyfluidsynth --break-system-packages
 
+sudo python3 -m pip install mido --break-system-packages
+
 sudo apt install git
 
 git clone  https://github.com/pimoroni/st7789-python
