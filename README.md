@@ -56,7 +56,7 @@ sudo mv /usr/lib/systemd/user/fluidsynth.service /usr/lib/systemd/user/fluidsynt
 
 Then reboot.
 
-If that doesn't help, try editing the /boot/firmware/config.txt file in your boot folder:
+If that doesn't help, try editing the /boot/firmware/config.txt file in your boot folder and change this line:
 
-# Enable audio (loads snd_bcm2835)
+#Enable audio (loads snd_bcm2835)
 dtparam=audio=off    # (was on)
