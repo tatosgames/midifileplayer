@@ -8,6 +8,8 @@ Install 32 bit os lite, bookworm or bullseye
 
 ssh to raspberrypi
 
+mkdir midifiles   # put your midifiles into this folder
+
 sudo apt update
 
 sudo apt upgrade
