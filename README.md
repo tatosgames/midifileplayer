@@ -41,7 +41,7 @@ cd /usr/share/sounds/sf2
 sudo wget http://ntonyx.com/soft/32MbGMStereo.sf2  
 sudo wget https://musical-artifacts.com/artifacts/923/General_MIDI_64_1.6.sf2  
 
-To make the script autostart: 
+To make the script autostart:  
 export EDITOR=nano  
 crontab -e
 
