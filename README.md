@@ -63,7 +63,7 @@ sudo wget http://ntonyx.com/soft/32MbGMStereo.sf2
 sudo wget https://musical-artifacts.com/artifacts/923/General_MIDI_64_1.6.sf2
 
 
-there's an SD card image for RasPi Zero 2 here:  https://1drv.ms/u/s!Au06jbGd_8NctIMgqsqv9tbYcJHwTQ?e=V0flcq
+there's an SD card image for RasPi Zero 2 here: https://1drv.ms/u/c/5cc3ff9db18d3aed/Ee06jbGd_8MggFygAQ0AAAABiNzcK595F2cbxFpR3cf5ig?e=bT1WbN
 
 
 (Download any MIDI file)
