@@ -38,7 +38,9 @@ Reboot the system:
 sudo reboot
 
 After logging back in:  
+cd ~
 git clone https://github.com/mrfloydst/midifileplayer
+ln -s /usr/share/sounds/sf2 .
 
 cd /usr/share/sounds/sf2  
 sudo wget http://ntonyx.com/soft/32MbGMStereo.sf2  
