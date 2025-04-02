@@ -37,6 +37,9 @@ sudo nano /etc/security/limits.conf
 Reboot the system:  
 sudo reboot
 
+After logging back in:  
+git clone https://github.com/mrfloydst/midifileplayer
+
 cd /usr/share/sounds/sf2  
 sudo wget http://ntonyx.com/soft/32MbGMStereo.sf2  
 sudo wget https://musical-artifacts.com/artifacts/923/General_MIDI_64_1.6.sf2  
