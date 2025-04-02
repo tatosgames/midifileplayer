@@ -15,12 +15,11 @@ sudo nano /boot/firmware/config.txt, add
 dtoverlay=hifiberry-dac  
 gpio=25=op,dh
 
-sudo apt-get install python3-rpi.gpio python3-spidev python3-pip python3-pil python3-numpy  
+sudo apt-get install git python3-rpi.gpio python3-spidev python3-pip python3-pil python3-numpy  
 sudo pip3 install pidi-display-st7789 --break-system-packages  
-sudo pip3 install git --break-system-packages  
+sudo pip3 install gitpython --break-system-packages  
 sudo pip3 install pyfluidsynth --break-system-packages  
 sudo python3 -m pip install mido --break-system-packages  
-sudo apt install git  
 git clone  https://github.com/pimoroni/st7789-python  
 cd st7789-python/examples/  
 sudo apt install libopenblas-dev  
