@@ -65,6 +65,18 @@ sudo wget http://ntonyx.com/soft/32MbGMStereo.sf2
 sudo wget https://musical-artifacts.com/artifacts/923/General_MIDI_64_1.6.sf2
 
 
+To make the script autostart:
+
+export EDITOR=nano
+
+crontab -e
+
+THEN, in the last line, add
+
+@reboot sudo /usr/bin/python3 /home/pi/midifileplayer/midiplayer.py > /home/pi/mlog.txt
+
+
+
 there's an SD card image for RasPi Zero 2 here: https://1drv.ms/u/c/5cc3ff9db18d3aed/Ee06jbGd_8MggFygAQ0AAAABiNzcK595F2cbxFpR3cf5ig?e=bT1WbN
 
 
