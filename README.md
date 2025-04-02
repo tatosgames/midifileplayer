@@ -57,7 +57,7 @@ THEN, in the last line, add
 @reboot sudo /usr/bin/python3 /home/pi/midifileplayer/midiplayer.py > /home/pi/mlog.txt
 
 there's an SD card image for RasPi Zero 2 here:  
-https://1drv.ms/u/c/5cc3ff9db18d3aed/Ee06jbGd_8MggFygAQ0AAAABiNzcK595F2cbxFpR3cf5ig?e=bT1WbN
+https://1drv.ms/u/c/5cc3ff9db18d3aed/EeThL7ORdWpCsPFlJCnd7fIBYfMfCscALHBu-Y-uZmMnvg?e=FKUpo0  
 
 (Download any MIDI file)  
 fluidsynth -a alsa -n -i /usr/share/sounds/sf2/FluidR3_GM.sf2 midifile.mid
