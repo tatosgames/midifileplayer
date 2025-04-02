@@ -29,6 +29,8 @@ sudo apt-get install python3-rpi.gpio python3-spidev python3-pip python3-pil pyt
 
 sudo pip3 install pidi-display-st7789 --break-system-packages
 
+sudo pip3 install git --break-system-packages
+
 sudo pip3 install pyfluidsynth --break-system-packages
 
 sudo python3 -m pip install mido --break-system-packages
