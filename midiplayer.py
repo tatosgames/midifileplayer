@@ -2,15 +2,9 @@
 #
 # let's import some libraries
 #
-import sys
-import threading
-import time
-import os
-import fluidsynth
-import mido
+import sys,git,threading,time,os,fluidsynth,mido,st7789
 from gpiozero import Button, DigitalOutputDevice
 from PIL import Image, ImageDraw, ImageFont
-import st7789
 #
 # the onscreen text gets stored in here
 #
@@ -41,6 +35,10 @@ pathes=["MIDI KEYBOARD","SOUND FONT","MIDI FILE"]
 files=["MIDI KEYBOARD","SOUND FONT","MIDI FILE"]
 selectedindex=0
 #
+# Define the path to your repository (assuming script is inside it)
+#
+repo_path = os.path.dirname(os.path.abspath(__file__))
+#
 # the display is always "square" on the Pimoroni boards
 #
 display_type = "square"
@@ -55,6 +53,42 @@ print(f"Using MIDI input: {midi_input}")
 #
 operation_mode="main screen"
 previous_operation_mode="main_screen"
+#
+# this part checks for updates
+#
+def check_for_updates(repo_path):
+    try:
+        repo = git.Repo(repo_path)
+        origin = repo.remotes.origin
+
+        # Fetch latest changes from the remote
+        origin.fetch()
+
+        # Compare local HEAD with remote HEAD
+        local_commit = repo.head.object.hexsha
+        remote_commit = origin.refs[repo.active_branch.name].object.hexsha
+
+        if local_commit != remote_commit:
+            print("New updates detected! Pulling latest changes...")
+            origin.pull()
+            return True  # Indicate update was applied
+
+        print("No updates found. Running the script as usual.")
+        return False
+    except Exception as e:
+        print("Error checking for updates:", e)
+        return False
+#
+# select first preset
+#
+def select_first_preset(synth, sfid):
+    # Get the first available preset in the SoundFont
+    for bank in range(128):  # MIDI supports 128 banks
+        for preset in range(128):  # Each bank has 128 presets
+            if synth.program_select(0, sfid, bank, preset):
+                print(f"Selected Bank {bank}, Preset {preset}")
+                return
+    raise ValueError("No presets found in the SoundFont")
 #
 # listen to buttons
 #
@@ -116,12 +150,18 @@ def handle_button(bt):
         if operation_mode=="MIDI KEYBOARD":
             pathes=[]
             files=[]
+            input_ports = mido.get_input_names()
             for port in input_ports:
                 pathes.append(port)
                 files.append(port)
             if(previous_operation_mode==operation_mode):
                 sfid=fs.sfload(soundfontname)
-                fs.program_select(0, sfid, 0, 0)
+                #fs.program_select(0, sfid, 0, 0)
+                try:
+                    select_first_preset(fs, sfid)
+                except ValueError as e:
+                    print(e)
+                fs.set_reverb(0.9,0.5,0.8,0.7)
             previous_operation_mode=operation_mode
         if operation_mode=="SOUND FONT":
             #
@@ -161,6 +201,12 @@ def handle_button(bt):
                 sfid=fs.sfload(soundfontname)
                 fs.play_midi_file(pathes[selectedindex])
             previous_operation_mode=operation_mode
+#
+# Check for updates and restart if necessary
+#
+if check_for_updates(repo_path):
+    print("Restarting script to apply updates...")
+    os.execv(sys.executable, ['python'] + sys.argv)
 #
 # attach the above given "handle_button" function to the four buttons
 #
