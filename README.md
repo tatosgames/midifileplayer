@@ -9,7 +9,7 @@ mkdir midifiles   # put your midifiles into this folder
 sudo apt update  
 sudo apt upgrade  
 sudo apt install fluidsynth  
-sudo raspi-config  - turn on spi and i2c  
+sudo raspi-config  # turn on spi and i2c  
 
 sudo nano /boot/firmware/config.txt, add  
 dtoverlay=hifiberry-dac  
