@@ -2,14 +2,26 @@
 """
 midiplayer.py
 
-Un semplice player per Raspberry Pi Zero 2W + Pirate Audio Line-Out:
-- Naviga file MIDI e file MP3 con quattro pulsanti
-- Riproduce MIDI via midish (inoltra ogni traccia al canale corrispondente)
-- Riproduce MP3 via mpg123 attraverso il DAC I²S del Pirate Audio Hat
-- Mostra il nome dei file sul display ST7789 da 240×240
+Un semplice player per Raspberry Pi Zero 2 W + Pirate Audio Line-Out:
+- Navigazione e selezione di file MIDI e MP3 via display ST7789 e 4 pulsanti GPIO
+- Playback MIDI puro via midish (canale per traccia)
+- Playback MP3 via mpg123 sul Pirate Audio HAT
+
+Hardware:
+- Pirate Audio Line-Out (DAC PCM5100A, display ST7789 240×240, 4 pulsanti su BCM 5, 6, 16, 24)
+- Pulsanti BCM 5=SELECT, 6=RESET, 16=DOWN, 24=UP
+
+Librerie:
+- ST7789 (display)
+- gpiozero (pulsanti)
+- mido (MIDI)
+- mpg123 (riproduzione MP3)
+- subprocess (midish & mpg123)
+- PIL (render testo)
 """
 
 import os
+import sys
 import subprocess
 import threading
 import time
@@ -17,287 +29,313 @@ import time
 from gpiozero import Button
 from PIL import Image, ImageDraw, ImageFont
 import mido
-from ST7789 import ST7789
+import st7789
 
-# —————————————— CONFIGURAZIONE ——————————————
+# ------------------------------------------------------------
+# CONFIGURAZIONE
+# ------------------------------------------------------------
+# Directory dei file
+MIDI_DIR  = "/home/pi/Music/MIDI"    # cartella con file .mid
+AUDIO_DIR = "/home/pi/Music/MP3"     # cartella con file .mp3
 
-# Percorsi alle cartelle contenenti i file
-MIDI_DIR  = os.path.expanduser("~/Music/MIDI")
-AUDIO_DIR = os.path.expanduser("~/Music/MP3")
-
-# Estensioni dei file
+# Estensioni
 MIDI_EXT  = ".mid"
 AUDIO_EXT = ".mp3"
 
-# Porta di output MIDI su USB (modificare se diverso)
-# Nota: prima di eseguire venga collegato un dispositivo MIDI USB, altrimenti l’array è vuoto.
-OUTPUT_PORTS = mido.get_output_names()
-MIDI_OUT = OUTPUT_PORTS[-1] if OUTPUT_PORTS else None
+# Pulsanti GPIO (BCM)
+BTN_SELECT = 5   # seleziona / invio
+BTN_RESET  = 6   # reset / torna al menu principale / stop
+BTN_DOWN   = 16  # scendi
+BTN_UP     = 24  # sali
 
-# GPIO dei pulsanti (BCM)
-BUTTON_UP     = Button(5)   # Scorri in alto
-BUTTON_RESET  = Button(6)   # Torna al menu principale e ferma riproduzione
-BUTTON_DOWN   = Button(16)  # Scorri in basso
-BUTTON_SELECT = Button(24)  # Seleziona / avvia playback
+# Palette colori
+COLOR_BG       = (0, 0, 0)        # sfondo nero
+COLOR_TEXT     = (255, 255, 255)  # testo bianco
+COLOR_HIGHL    = (255, 255, 255)  # sfondo riga evidenziata
+COLOR_HIGHL_TX = (0, 0, 0)        # testo nero (riga evid.)
 
-# Display ST7789 240×240 (collegamento Pirate Audio Line-Out)
-disp = ST7789(
-    height=240,
-    width=240,
-    rotation=90,
-    port=0,
-    cs=ST7789.BG_SPI_CS_FRONT,
-    dc=9,
-    backlight=13,
-    spi_speed_hz=80_000_000,
-    offset_left=0,
-    offset_top=0,
-)
+# Font per display (DejaVuSans-Bold, dimensione 20)
+FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+FONT_SIZE = 20
 
-# Font per il testo sul display
-FONT = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
+# ------------------------------------------------------------
+# VARIABILI GLOBALI
+# ------------------------------------------------------------
+# Lista delle modalità principali
+MODE_LIST = ["MIDI FILE", "AUDIO FILE"]
 
-# Intervallo di refresh del display (secondi)
-REFRESH_INTERVAL = 0.1
+# Stato corrente
+operation_mode   = "main screen"
+selected_index   = 0
+files, paths     = [], []
+midi_out_port    = None
 
-# —————————————— VARIABILI GLOBALI ——————————————
+# Processi per playback
+midish_proc = None
+audio_proc  = None
 
-midi_process  = None   # Subprocess che esegue `midish`
-audio_process = None   # Subprocess che esegue `mpg123`
-
-operation_mode  = "main screen"
-previous_mode   = None
-file_paths      = []   # Percorsi completi dei file nella cartella corrente
-file_names      = []   # Nomi da mostrare a schermo (senza estensione)
-selected_index  = 0
-
-# Modalità possibili nel menu principale
-MAIN_MODES = ["MIDI FILE", "AUDIO FILE"]
-
-# —————————————— FUNZIONI DI PLAYBACK ——————————————
-
+# ------------------------------------------------------------
+# FUNZIONI DI UTILITÀ PLAYBACK
+# ------------------------------------------------------------
 def stop_all_playback():
-    """Termina qualunque processo di riproduzione in corso."""
-    global midi_process, audio_process
+    """
+    Chiude eventuali processi di playback MIDI (midish) o audio (mpg123).
+    """
+    global midish_proc, audio_proc
 
-    if midi_process:
+    # Stop MIDI
+    if midish_proc:
         try:
-            midi_process.stdin.write("quit\n")
-            midi_process.stdin.flush()
-            midi_process.wait()
+            midish_proc.stdin.write("quit\n")
+            midish_proc.stdin.flush()
+            midish_proc.wait(timeout=2)
         except Exception:
             pass
-        midi_process = None
+        midish_proc = None
 
-    if audio_process:
+    # Stop audio MP3
+    if audio_proc:
         try:
-            audio_process.terminate()
-            audio_process.wait()
+            audio_proc.terminate()
+            audio_proc.wait(timeout=2)
         except Exception:
             pass
-        audio_process = None
+        audio_proc = None
 
-def play_midi(path):
+
+def play_midi_with_midish(path):
     """
-    Avvia `midish`, crea un client 0 puntato sul dispositivo MIDI USB,
-    quindi invia ogni messaggio del file MIDI sulla porta corretta.
+    Riproduce il file MIDI in 'path' instradando ciascun evento MIDI
+    su midish, canale=track_index+1.
     """
-    global midi_process
+    global midish_proc, midi_out_port
+
     stop_all_playback()
 
-    if not MIDI_OUT:
-        print("Nessuna porta MIDI USB rilevata.")
-        return
-
-    # Avvia midish
-    midi_process = subprocess.Popen(
+    # Avvia midish come subprocess
+    midish_proc = subprocess.Popen(
         ["midish"],
         stdin=subprocess.PIPE,
-        text=True
+        text=True,
+        bufsize=0
     )
-    # Crea client 0 → porta USB
-    midi_process.stdin.write(f'dnew 0 "{MIDI_OUT}" wo\n')
-    midi_process.stdin.flush()
 
-    # Carica e riproduci il file MIDI
+    # Crea un nuovo client 0 verso la porta USB MIDI rilevata
+    midish_proc.stdin.write(f'dnew 0 "{midi_out_port}" wo\n')
+    midish_proc.stdin.flush()
+
+    # Leggi il file MIDI e invia messaggi
     mid = mido.MidiFile(path)
     for msg in mid.play():
-        if not msg.is_meta:
-            status = msg.bytes()[0]
-            data1  = msg.bytes()[1] if len(msg.bytes()) > 1 else 0
-            data2  = msg.bytes()[2] if len(msg.bytes()) > 2 else 0
-            midi_process.stdin.write(f"ev {status} {data1} {data2}\n")
-            midi_process.stdin.flush()
+        if msg.is_meta:
+            continue
 
-    # Al termine, chiudi midish
-    midi_process.stdin.write("quit\n")
-    midi_process.stdin.flush()
-    midi_process.wait()
-    midi_process = None
+        # Status byte (nota ON, off, cc, ecc.) + canale
+        status = msg.bytes()[0]
+        data1  = msg.bytes()[1] if len(msg.bytes()) > 1 else 0
+        data2  = msg.bytes()[2] if len(msg.bytes()) > 2 else 0
 
-def play_audio(path):
+        # Invia “ev <status> <data1> <data2>”
+        midish_proc.stdin.write(f"ev {status} {data1} {data2}\n")
+        midish_proc.stdin.flush()
+
+def play_audio_mp3(path):
     """
-    Avvia mpg123 in modalità quiet per riprodurre il file MP3
-    tramite il DAC I²S del Pirate Audio Hat.
+    Riproduce il file MP3 in 'path' usando mpg123 sul Pirate Audio HAT.
     """
-    global audio_process
+    global audio_proc
+
     stop_all_playback()
 
-    audio_process = subprocess.Popen(
-        ["mpg123", "-q", path]
+    audio_proc = subprocess.Popen(
+        ["mpg123", "-q", path],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
     )
 
-# —————————————— NAVIGAZIONE FILE ——————————————
-
-def scan_files_for_mode(mode):
+# ------------------------------------------------------------
+# FUNZIONI DI NAVIGAZIONE FILE
+# ------------------------------------------------------------
+def scan_files():
     """
-    Popola `file_paths` e `file_names` in base alla modalità:
-    - "MIDI FILE": cerca files .mid in MIDI_DIR
-    - "AUDIO FILE": cerca files .mp3 in AUDIO_DIR
+    Popola 'paths' e 'files' in base alla modalità corrente.
     """
-    global file_paths, file_names, selected_index
+    global paths, files, operation_mode
 
-    file_paths = []
-    file_names = []
-    selected_index = 0
+    paths = []
+    files = []
 
-    if mode == "MIDI FILE":
-        base_dir = MIDI_DIR
-        ext = MIDI_EXT
-    elif mode == "AUDIO FILE":
-        base_dir = AUDIO_DIR
-        ext = AUDIO_EXT
-    else:
-        return
-
-    if not os.path.isdir(base_dir):
-        os.makedirs(base_dir, exist_ok=True)
-
-    for root, _, files in os.walk(base_dir):
-        for f in sorted(files):
-            if f.lower().endswith(ext):
-                full = os.path.join(root, f)
-                file_paths.append(full)
-                file_names.append(os.path.splitext(f)[0])
-
-    if not file_paths:
-        file_names = ["<no files>"]
-
-# —————————————— GESTIONE PULSANTI ——————————————
-
-def handle_button_up():
-    """Scorri verso l’alto nella lista."""
-    global selected_index
-    if operation_mode in MAIN_MODES and file_names:
-        selected_index = max(selected_index - 1, 0)
-
-def handle_button_down():
-    """Scorri verso il basso nella lista."""
-    global selected_index
-    if operation_mode in MAIN_MODES and file_names:
-        selected_index = min(selected_index + 1, len(file_names) - 1)
-
-def handle_button_reset():
-    """
-    Ripristina la modalità principale, ferma riproduzione e torna al menu principale.
-    """
-    global operation_mode, previous_mode, file_names, file_paths, selected_index
-    stop_all_playback()
-    previous_mode = operation_mode
-    operation_mode = "main screen"
-    file_paths = []
-    file_names = []
-    selected_index = 0
-
-def handle_button_select():
-    """
-    Al click di SELECT:
-    - Se in "main screen", passa a "MIDI FILE" o "AUDIO FILE" in base a selected_index
-    - Se in "MIDI FILE", avvia play_midi()
-    - Se in "AUDIO FILE", avvia play_audio()
-    """
-    global operation_mode, previous_mode
-
-    if operation_mode == "main screen":
-        # Seleziona la sottocategoria in base all’indice
-        operation_mode = MAIN_MODES[selected_index % len(MAIN_MODES)]
-        scan_files_for_mode(operation_mode)
-    elif operation_mode == "MIDI FILE":
-        if file_paths:
-            play_midi(file_paths[selected_index])
+    if operation_mode == "MIDI FILE":
+        for dp, dn, fn in os.walk(MIDI_DIR):
+            for f in fn:
+                if f.lower().endswith(MIDI_EXT):
+                    paths.append(os.path.join(dp, f))
+                    files.append(f)
     elif operation_mode == "AUDIO FILE":
-        if file_paths:
-            play_audio(file_paths[selected_index])
+        for dp, dn, fn in os.walk(AUDIO_DIR):
+            for f in fn:
+                if f.lower().endswith(AUDIO_EXT):
+                    paths.append(os.path.join(dp, f))
+                    files.append(f)
 
-# Associa le callback ai pulsanti
-BUTTON_UP.when_pressed     = handle_button_up
-BUTTON_DOWN.when_pressed   = handle_button_down
-BUTTON_RESET.when_pressed  = handle_button_reset
-BUTTON_SELECT.when_pressed = handle_button_select
+    # Se non ci sono file, mostra un placeholder
+    if not files:
+        files = ["<Nessun file trovato>"]
+        paths = [""]
 
-# —————————————— RENDERING DISPLAY ——————————————
-
-def render_display():
+# ------------------------------------------------------------
+# CALLBACK PULSANTI
+# ------------------------------------------------------------
+def handle_button(button):
     """
-    Aggiorna il display ST7789 disegnando:
-    - Il menu principale con "MIDI FILE" e "AUDIO FILE"
-    - Oppure la lista dei file (MIDI o MP3) con evidenziato selected_index
+    Gestisce la pressione dei 4 pulsanti.
+    BCM 5 (SELECT), 6 (RESET), 16 (DOWN), 24 (UP).
     """
-    img = Image.new("RGB", (disp.width, disp.height), color=(0, 0, 0))
-    draw = ImageDraw.Draw(img)
+    global selected_index, operation_mode, files, paths
 
-    if operation_mode == "main screen":
-        options = ["MIDI FILE", "AUDIO FILE"]
-        for i, text in enumerate(options):
-            y = 60 + i * 40
-            if i == selected_index:
-                # Rettangolo bianco con testo nero
-                draw.rectangle([20, y - 5, 220, y + 25], fill=(255, 255, 255))
-                draw.text((30, y), text, font=FONT, fill=(0, 0, 0))
-            else:
-                draw.text((30, y), text, font=FONT, fill=(255, 255, 255))
+    pin = button.pin.number
+
+    # NAVIGAZIONE SU/GIÙ
+    if pin == BTN_UP:
+        if operation_mode in ("MIDI FILE", "AUDIO FILE"):
+            selected_index = max(selected_index - 1, 0)
+        elif operation_mode == "main screen":
+            selected_index = max(selected_index - 1, 0)
+
+    elif pin == BTN_DOWN:
+        if operation_mode in ("MIDI FILE", "AUDIO FILE"):
+            selected_index = min(selected_index + 1, len(files) - 1)
+        elif operation_mode == "main screen":
+            selected_index = min(selected_index + 1, len(MODE_LIST) - 1)
+
+    # RESET: torna al menu principale e interrompe playback
+    elif pin == BTN_RESET:
+        stop_all_playback()
+        operation_mode = "main screen"
+        selected_index = 0
+        files  = []
+        paths  = []
+
+    # SELECT: conferma selezione
+    elif pin == BTN_SELECT:
+        if operation_mode == "main screen":
+            # Passa alla modalità scelta e popola lista file
+            operation_mode = MODE_LIST[selected_index]
+            selected_index = 0
+            scan_files()
+
+        elif operation_mode == "MIDI FILE":
+            if paths[selected_index]:
+                play_midi_with_midish(paths[selected_index])
+
+        elif operation_mode == "AUDIO FILE":
+            if paths[selected_index]:
+                play_audio_mp3(paths[selected_index])
+
+# ------------------------------------------------------------
+# INIZIALIZZAZIONE DISPLAY ST7789
+# ------------------------------------------------------------
+def init_display():
+    """
+    Configura e restituisce l’istanza ST7789 per il display PIRATE.
+    """
+    disp = st7789.ST7789(
+        height=240,
+        rotation=90,
+        port=0,
+        cs=st7789.BG_SPI_CS_FRONT,
+        dc=9,
+        backlight=13,
+        spi_speed_hz=80_000_000,
+        offset_left=0,
+        offset_top=0,
+    )
+    disp.begin()
+    return disp
+
+# ------------------------------------------------------------
+# INIZIALIZZAZIONE PULSANTI
+# ------------------------------------------------------------
+def init_buttons():
+    """
+    Associa la callback handle_button a ciascun pulsante.
+    """
+    Button(BTN_SELECT).when_pressed = handle_button
+    Button(BTN_RESET).when_pressed  = handle_button
+    Button(BTN_DOWN).when_pressed   = handle_button
+    Button(BTN_UP).when_pressed     = handle_button
+
+# ------------------------------------------------------------
+# MAIN: INIZIALIZZAZIONE E LOOP PRINCIPALE
+# ------------------------------------------------------------
+def main():
+    global midi_out_port, operation_mode, selected_index
+
+    # 1. Trova la porta di output MIDI USB (ultima rilevata)
+    out_ports = mido.get_output_names()
+    if out_ports:
+        midi_out_port = out_ports[-1]
     else:
-        # Mostra la lista dei file in file_names
-        max_lines = 5  # quante righe visuali tenere
-        start_index = max(0, selected_index - 2)
-        for i in range(start_index, min(start_index + max_lines, len(file_names))):
-            y = 20 + (i - start_index) * 40
-            if i == selected_index:
-                draw.rectangle([10, y - 5, 230, y + 25], fill=(255, 255, 255))
-                draw.text((20, y), file_names[i], font=FONT, fill=(0, 0, 0))
-            else:
-                draw.text((20, y), file_names[i], font=FONT, fill=(255, 255, 255))
+        print("Nessuna porta MIDI USB rilevata. Collega un device e riavvia.")
+        sys.exit(1)
 
-    disp.display(img)
+    # 2. Inizializza display e pulsanti
+    disp = init_display()
+    init_buttons()
 
-# Thread di rendering costante
-def display_thread():
+    # 3. Carica font
+    try:
+        font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
+    except Exception:
+        font = ImageFont.load_default()
+
+    # 4. Variabili per il rendering
+    WIDTH  = disp.width   # 240
+    HEIGHT = disp.height  # 240
+    line_height = FONT_SIZE + 8
+    max_lines   = HEIGHT // line_height
+
+    # 5. Ciclo principale di rendering
     while True:
-        render_display()
-        time.sleep(REFRESH_INTERVAL)
+        # Crea immagine nera di base
+        img  = Image.new("RGB", (WIDTH, HEIGHT), color=COLOR_BG)
+        draw = ImageDraw.Draw(img)
 
-# —————————————— PROGRAMMA PRINCIPALE ——————————————
+        # Determina lista da mostrare
+        if operation_mode == "main screen":
+            display_list = MODE_LIST
+        else:
+            display_list = files
+
+        # Calcola offset per scroll se troppi elementi
+        if len(display_list) <= max_lines:
+            offset = 0
+        else:
+            # Scroll in modo che selected_index sia sempre visibile
+            if selected_index < max_lines:
+                offset = 0
+            else:
+                offset = selected_index - max_lines + 1
+
+        # Disegna ciascuna riga
+        for idx, entry in enumerate(display_list[offset: offset + max_lines]):
+            y = idx * line_height
+            # Evidenzia riga selezionata
+            if (idx + offset) == selected_index:
+                draw.rectangle([(0, y), (WIDTH, y + line_height)], fill=COLOR_HIGHL)
+                draw.text((10, y + 4), entry, font=font, fill=COLOR_HIGHL_TX)
+            else:
+                draw.text((10, y + 4), entry, font=font, fill=COLOR_TEXT)
+
+        # Mostra immagine sul display
+        disp.display(img)
+
+        # Breve pausa per ridurre l’uso CPU
+        time.sleep(0.1)
 
 if __name__ == "__main__":
-    # Inizializza display
-    disp.begin()
-
-    # Se non c’è alcuna porta MIDI, mostra un messaggio su console
-    if MIDI_OUT is None:
-        print("Attenzione: nessun dispositivo MIDI USB rilevato.")
-    else:
-        print(f"Output MIDI selezionato: {MIDI_OUT}")
-
-    # Avvia il thread di rendering del display
-    t = threading.Thread(target=display_thread, daemon=True)
-    t.start()
-
-    # Loop principale: mantiene attivo il programma
     try:
-        while True:
-            time.sleep(1)
+        main()
     except KeyboardInterrupt:
         stop_all_playback()
-        disp.clear()  # spegne il display
-        print("\nUscita programmata.")
-
+        sys.exit(0)
