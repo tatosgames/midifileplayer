@@ -14,6 +14,7 @@ Hardware:
 
 import os
 import sys
+import json
 import threading
 import time
 import subprocess
@@ -28,11 +29,12 @@ MIDI_DIR   = "/home/pi/Music/MIDI"
 AUDIO_DIR  = "/home/pi/Music/MP3"
 MIDI_EXT   = ".mid"
 AUDIO_EXT  = ".mp3"
+MAP_FILE   = "/home/pi/track_map.json"
 
 BTN_SELECT = 5
 BTN_RESET  = 6
-BTN_DOWN   = 24  # increase index
-BTN_UP     = 16  # decrease index
+BTN_DOWN   = 24  # increase index/value
+BTN_UP     = 16  # decrease index/value
 
 COLOR_BG       = (0, 0, 0)
 COLOR_TEXT     = (0, 255, 0)
@@ -54,9 +56,8 @@ files, paths      = [], []
 audio_proc        = None
 
 # Setup state
-in_setup         = False
-in_edit          = False
-track_map        = {i: i for i in range(NUM_TRACKS)}  # default 0->0,1->1,...
+in_edit           = False
+track_map         = {}
 
 # Playback control
 stop_flag         = threading.Event()
@@ -68,7 +69,30 @@ playback_events   = []
 
 midi_outputs = []
 
+# Persistence
+
+def load_mapping():
+    global track_map
+    if os.path.exists(MAP_FILE):
+        try:
+            with open(MAP_FILE) as f:
+                data = json.load(f)
+                track_map = {int(k): int(v) for k,v in data.items()}
+        except:
+            track_map = {i: i for i in range(NUM_TRACKS)}
+    else:
+        track_map = {i: i for i in range(NUM_TRACKS)}
+
+
+def save_mapping():
+    try:
+        with open(MAP_FILE, 'w') as f:
+            json.dump(track_map, f)
+    except Exception as e:
+        print(f">>> [WARN] Unable to save mapping: {e}")
+
 # MIDI outputs
+
 def open_all_midi_outputs():
     global midi_outputs
     names = mido.get_output_names()
@@ -80,6 +104,7 @@ def open_all_midi_outputs():
         except:
             pass
 
+
 def close_all_midi_outputs():
     global midi_outputs
     for out in midi_outputs:
@@ -88,6 +113,7 @@ def close_all_midi_outputs():
     midi_outputs = []
 
 # Playback worker
+
 def _midi_playback_worker(tpq):
     global playback_active
     prev = 0
@@ -96,28 +122,31 @@ def _midi_playback_worker(tpq):
         delta = abs_tick - prev
         time.sleep(mido.tick2second(delta, tpq, 500000))
         if not msg.is_meta:
-            ch = track_map.get(tidx, tidx) % 16
-            out = msg.copy(channel=ch)
-            for o in midi_outputs: o.send(out)
+            ch = track_map.get(tidx, tidx) % NUM_OUT
+            out_msg = msg.copy(channel=ch)
+            for o in midi_outputs:
+                o.send(out_msg)
         prev = abs_tick
     close_all_midi_outputs()
     playback_active = False
 
 # Play MIDI
+
 def play_midi_file(path):
     global midi_thread, stop_flag, playback_events, playback_start, playback_duration, playback_active
     stop_flag.set()
-    if midi_thread: midi_thread.join()
+    if midi_thread:
+        midi_thread.join()
     stop_flag.clear()
     mid = mido.MidiFile(path)
     tpq = mid.ticks_per_beat
     evts = []
     for tidx, tr in enumerate(mid.tracks):
-        abs_tick = 0
+        abs_t = 0
         for msg in tr:
-            abs_tick += msg.time
+            abs_t += msg.time
             if not msg.is_meta:
-                evts.append((abs_tick, tidx, msg))
+                evts.append((abs_t, tidx, msg))
     evts.sort(key=lambda x: x[0])
     playback_events = evts
     max_tick = evts[-1][0] if evts else 0
@@ -128,11 +157,13 @@ def play_midi_file(path):
     midi_thread = threading.Thread(target=_midi_playback_worker, args=(tpq,), daemon=True)
     midi_thread.start()
 
-# MP3
+# MP3 playback
+
 def stop_all_playback():
     global audio_proc, playback_active
     stop_flag.set()
-    if midi_thread: midi_thread.join()
+    if midi_thread:
+        midi_thread.join()
     close_all_midi_outputs()
     playback_active = False
     if audio_proc:
@@ -146,95 +177,152 @@ def play_audio_file(path):
     subprocess.Popen(["mpg123","-q",path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 # File scan
+
 def scan_files():
     global files, paths
     files, paths = [], []
     base, ext = (MIDI_DIR, MIDI_EXT) if operation_mode=="MIDI FILE" else (AUDIO_DIR, AUDIO_EXT)
-    for dp,_,fn in os.walk(base):
+    for dp, _, fn in os.walk(base):
         for f in fn:
             if f.lower().endswith(ext):
-                files.append(f); paths.append(os.path.join(dp,f))
+                files.append(f)
+                paths.append(os.path.join(dp,f))
     if not files:
         files = ["<Empty>"]
         paths = [""]
 
-# Buttons
+# Button handler
+
 def handle_button(btn):
-    global selected_index, operation_mode, in_setup, in_edit
+    global selected_index, operation_mode, in_edit
     pin = btn.pin.number
     if operation_mode == "SETUP":
         if in_edit:
-            if pin == BTN_UP: track_map[selected_index] = min(track_map[selected_index]+1, NUM_OUT-1)
-            elif pin == BTN_DOWN: track_map[selected_index] = max(track_map[selected_index]-1, 0)
-            elif pin == BTN_SELECT: in_edit = False
+            if pin == BTN_UP:
+                track_map[selected_index] = max(0, track_map[selected_index]-1)
+            elif pin == BTN_DOWN:
+                track_map[selected_index] = min(NUM_OUT-1, track_map[selected_index]+1)
+            elif pin == BTN_SELECT:
+                in_edit = False
+                save_mapping()
         else:
-            if pin == BTN_UP: selected_index = (selected_index-1) % NUM_TRACKS
-            elif pin == BTN_DOWN: selected_index = (selected_index+1) % NUM_TRACKS
-            elif pin == BTN_SELECT: in_edit = True
+            if pin == BTN_UP:
+                selected_index = (selected_index-1) % NUM_TRACKS
+            elif pin == BTN_DOWN:
+                selected_index = (selected_index+1) % NUM_TRACKS
+            elif pin == BTN_SELECT:
+                in_edit = True
             elif pin == BTN_RESET:
-                in_setup = False; operation_mode = "main screen"; selected_index = 0
+                operation_mode = "main screen"
+                selected_index = 0
     else:
-        if pin == BTN_UP: selected_index = max(selected_index-1, 0)
-        elif pin == BTN_DOWN: selected_index = min(selected_index+1, len(files if operation_mode!="main screen" else MODE_LIST)-1)
+        if pin == BTN_UP:
+            selected_index = max(selected_index-1, 0)
+        elif pin == BTN_DOWN:
+            selected_index = min(selected_index+1, len(files if operation_mode!="main screen" else MODE_LIST)-1)
         elif pin == BTN_RESET:
-            stop_all_playback(); operation_mode="main screen"; selected_index=0; scan_files()
+            stop_all_playback()
+            operation_mode = "main screen"
+            selected_index = 0
+            scan_files()
         elif pin == BTN_SELECT:
-            sel = MODE_LIST[selected_index] if operation_mode=="main screen" else operation_mode
-            if operation_mode=="main screen":
-                if sel=="SETUP":
-                    operation_mode = "SETUP"; in_setup = True; selected_index=0
+            if operation_mode == "main screen":
+                sel = MODE_LIST[selected_index]
+                if sel == "SETUP":
+                    operation_mode = "SETUP"
+                    selected_index = 0
                 else:
-                    operation_mode = sel; selected_index=0; scan_files()
-            elif operation_mode=="MIDI FILE":
-                if paths[selected_index]: play_midi_file(paths[selected_index])
-            elif operation_mode=="AUDIO FILE":
-                if paths[selected_index]: play_audio_file(paths[selected_index])
+                    operation_mode = sel
+                    selected_index = 0
+                    scan_files()
+            elif operation_mode == "MIDI FILE":
+                if paths[selected_index]:
+                    play_midi_file(paths[selected_index])
+            elif operation_mode == "AUDIO FILE":
+                if paths[selected_index]:
+                    play_audio_file(paths[selected_index])
 
-# Display
+# Display init
+
 def init_display():
     d = st7789.ST7789(
         height=240, rotation=90, port=0,
         cs=st7789.BG_SPI_CS_FRONT, dc=9, backlight=13,
         spi_speed_hz=80_000_000, offset_left=0, offset_top=0
     )
-    d.begin(); return d
+    d.begin()
+    return d
+
+# Buttons init
 
 def init_buttons():
-    for b in (BTN_SELECT, BTN_RESET, BTN_DOWN, BTN_UP): Button(b).when_pressed = handle_button
+    for b in (BTN_SELECT, BTN_RESET, BTN_DOWN, BTN_UP):
+        Button(b).when_pressed = handle_button
 
 # Main
 def main():
-    disp = init_display(); init_buttons()
-    font = ImageFont.truetype(FONT_PATH, FONT_SIZE) if os.path.exists(FONT_PATH) else ImageFont.load_default()
-    W,H = disp.width, disp.height; lh = FONT_SIZE+8; maxl = H//lh; scroll=50
+    load_mapping()
     scan_files()
+    disp = init_display()
+    init_buttons()
+    font = ImageFont.truetype(FONT_PATH, FONT_SIZE) if os.path.exists(FONT_PATH) else ImageFont.load_default()
+    W, H = disp.width, disp.height
+    lh = FONT_SIZE + 8
+    maxl = H // lh
+    scroll = 50
+
     while True:
-        img = Image.new("RGB", (W,H), COLOR_BG); draw = ImageDraw.Draw(img)
-        if operation_mode=="main screen":
+        img = Image.new("RGB", (W, H), COLOR_BG)
+        draw = ImageDraw.Draw(img)
+
+        if operation_mode == "main screen":
             items = MODE_LIST
-        elif operation_mode=="SETUP":
+        elif operation_mode == "SETUP":
             items = [f"TRK {i+1} -> OUT {track_map[i]+1}" for i in range(NUM_TRACKS)]
         else:
             items = files
-        off = 0 if len(items)<=maxl else max(0, selected_index-maxl+1)
-        for idx, text in enumerate(items[off:off+maxl]):
-            y = idx*lh; sel = (off+idx==selected_index)
-            bg = COLOR_SETUP_BG if operation_mode=="SETUP" else COLOR_HIGHL
-            if sel: draw.rectangle([(0,y),(W,y+lh)], fill=bg)
-            x0=10; tw,_ = draw.textbbox((0,0),text,font)[2:]
-            if sel and tw>W-20:
-                t=time.time(); offx=int((t*scroll)%(tw+20)); x=x0-offx
-                draw.text((x,y+4), text, font=font, fill=COLOR_HIGHL_TX)
-                draw.text((x+tw+20,y+4), text, font=font, fill=COLOR_HIGHL_TX)
-            else:
-                col=COLOR_HIGHL_TX if sel else COLOR_TEXT
-                draw.text((x0,y+4), text, font=font, fill=col)
-        if playback_active and playback_duration>0:
-            e=time.perf_counter()-playback_start; f=min(max(e/playback_duration,0),1)
-            draw.rectangle([(0,H-5),(int(f*W),H)], fill=COLOR_HIGHL)
-        disp.display(img); time.sleep(0.05)
 
-if __name__=="__main__":
-    try: main()
+        off = 0 if len(items) <= maxl else max(0, selected_index - maxl + 1)
+
+        for i, text in enumerate(items[off:off+maxl]):
+            y = i * lh
+            sel = (off + i == selected_index)
+            bg = COLOR_SETUP_BG if operation_mode == "SETUP" else COLOR_HIGHL
+            if sel:
+                draw.rectangle([(0, y), (W, y + lh)], fill=bg)
+            x0 = 10
+            tw, _ = draw.textbbox((0, 0), text, font)[2:]
+
+            if sel and tw > W - 20:
+                t = time.time()
+                offset = int((t * scroll) % (tw + 20))
+                x = x0 - offset
+                # Blink OUT portion if in_edit
+                if operation_mode == "SETUP" and in_edit and i + off == selected_index:
+                    # blink full text
+                    if int(t * 2) % 2 == 0:
+                        draw.text((x, y + 4), text, font=font, fill=COLOR_SETUP_BG)
+                draw.text((x, y + 4), text, font=font, fill=COLOR_HIGHL_TX)
+                draw.text((x + tw + 20, y + 4), text, font=font, fill=COLOR_HIGHL_TX)
+            else:
+                col = COLOR_HIGHL_TX if sel else COLOR_TEXT
+                # blink OUT if editing
+                if operation_mode == "SETUP" and sel and in_edit:
+                    if int(time.time() * 2) % 2 == 0:
+                        col = COLOR_SETUP_BG
+                draw.text((x0, y + 4), text, font=font, fill=col)
+
+        if playback_active and playback_duration > 0:
+            elapsed = time.perf_counter() - playback_start
+            frac = min(max(elapsed / playback_duration, 0.0), 1.0)
+            draw.rectangle([(0, H - 5), (int(frac * W), H)], fill=COLOR_HIGHL)
+
+        disp.display(img)
+        time.sleep(0.05)
+
+if __name__ == "__main__":
+    try:
+        main()
     except KeyboardInterrupt:
-        stop_all_playback(); sys.exit(0)
+        stop_all_playback()
+        sys.exit(0)
